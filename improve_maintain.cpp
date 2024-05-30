@@ -1,646 +1,337 @@
+// Improve dynamic algorithms ImproveIns and ImproveDel to maintain AADS
+// Usage: ./main <graph_dataset_address> <R_set_address> <A_set_address>
 #include <bits/stdc++.h>
-#include <fstream>
 using namespace std;
-typedef int type;
+const int INF = 1000000000;
 
-const type INF = 2000000000;
-double timer;
-inline void timer_start() { timer = clock(); }
-inline double timer_end() { double t = (clock() - timer) / CLOCKS_PER_SEC; return t; }
-
-long long int mem = 0;
-
-// A simplified queue that actually implemented by an array, use Q(size) to initialize, where size is the size of the array. 
+struct Timer {
+	double start_time, end_time;
+	void start() { start_time = clock(); }
+	void end() { end_time = clock(); }
+	double time() { return (end_time - start_time) / CLOCKS_PER_SEC; }
+};
+template <class T>
+struct Set {
+	T* nodes; bool* in; int size = -1;
+	Set() {}
+	Set(int sz) { size = 0; nodes = (T*)malloc(sz * sizeof(T)); in = (bool*)malloc(sz * sizeof(int)); memset(in, 0, sz * sizeof(int)); }
+	void alloc(int sz) { size = 0; nodes = (T*)malloc(sz * sizeof(int)); in = (bool*)malloc(sz * sizeof(int)); memset(in, 0, sz * sizeof(int)); }
+	void insert(T x) { nodes[size++] = x; in[x] = true; }
+	void clear() { for (int i = 0; i < size; i++) in[nodes[i]] = false; size = 0; }
+	~Set() { free(nodes), free(in); }
+	void operator=(Set& S) { clear(); for (int i = 0; i < S.size; i++) insert(S.nodes[i]); }
+};
+template <class T>
+struct Map {
+	int* nodes; bool* in; int size = -1; T* value;
+	Map() {}
+	Map(int sz) { size = 0; nodes = (int*)malloc(sz * sizeof(int)); in = (bool*)malloc(sz * sizeof(int)); memset(in, 0, sz * sizeof(int)); value = (T*)malloc(sz * sizeof(T)); memset(value, 0, sz * sizeof(T)); }
+	void alloc(int sz) { size = 0; nodes = (int*)malloc(sz * sizeof(int)); in = (bool*)malloc(sz * sizeof(int)); memset(in, 0, sz * sizeof(int)); value = (T*)malloc(sz * sizeof(T)); memset(value, 0, sz * sizeof(T)); }
+	void freememory() { free(nodes), free(in), free(value); }
+	void clear() { for (int i = 0; i < size; i++) in[nodes[i]] = false, value[nodes[i]] = 0; size = 0; }
+	T& operator[](int x) { if (!in[x]) nodes[size++] = x, in[x] = true; return value[x]; }
+	~Map() { free(nodes), free(in), free(value); }
+};
+template <class T>
 struct Queue {
-	type* node; type head, tail;
+	T* nodes; int head, tail;
 	Queue() {}
-	Queue(type size) { node = (type*)malloc(size * sizeof(type)); head = tail = 0; }
-	void alloc(type sz) { head = tail = 0; node = (type*)malloc(sz * sizeof(type)); }
-	~Queue() { free(node); }
+	Queue(int size) { nodes = (T*)malloc(size * sizeof(T)); head = tail = 0; }
+	void alloc(int sz) { head = tail = 0; nodes = (int*)malloc(sz * sizeof(int)); }
+	~Queue() { free(nodes); }
 	bool empty() { return head == tail; }
-	type pop() { return node[head++]; }
-	void push(type x) { node[tail++] = x; }
+	int pop() { return nodes[head++]; }
+	void push(T x) { nodes[tail++] = x; }
 	void clear() { head = tail = 0; }
 };
-// A simplified queue that also implemented by an array, use set(size) to initialize, use reset(size) to reinitialize. 
-struct Set {
-	type* nodes;
-	bool* in;
-	type size = -1;
-	Set() {}
-	Set(type sz) { size = 0; nodes = (type*)malloc(sz * sizeof(type)); in = (bool*)malloc(sz * sizeof(type)); memset(in, 0, sz * sizeof(type)); }
-	void alloc(type sz) { size = 0; nodes = (type*)malloc(sz * sizeof(type)); in = (bool*)malloc(sz * sizeof(type)); memset(in, 0, sz * sizeof(type)); }
-	void freememory() { free(nodes), free(in); }
-	void erase(Set& s) { for (type i = 0; i < s.size; i++) in[s.nodes[i]] = false; }
-	void insert(type x) { nodes[size++] = x; in[x] = true; }
-	void insert(Set& s) { for (type i = 0; i < s.size; i++) insert(s.nodes[i]); }
-	void clear() { for (type i = 0; i < size; i++) in[nodes[i]] = false; size = 0; }
-	~Set() { free(nodes); free(in); }
-};
-// Edge structure, t1 and t2 are two endpoints, "to" is the endpoint the edge points to. 
-struct Edge { type t1, t2, to; bool exists; };
 
-vector<Set> RSet;
-vector<Set> ASet;
+inline int read_number(FILE* in) {
+	int x = 0; char ch = 0; while (ch < '0' || ch > '9') ch = fgetc(in); while (ch >= '0' && ch <= '9') { x = x * 10 + (ch - '0'); ch = fgetc(in); } return x;
+}
+inline void check(bool flag, const char* message) {
+	if (!flag) {
+		printf("!!!!! CHECK ERROR !!!!!\n");
+		printf("Error message: %s\n", message);
+		assert(0);
+	}
+}
 
-set<type> totalupdateedges;
-
-// Most computation is in the Graph structure. 
+struct Edge { int t1, t2, to; bool exists; };
 struct Graph {
-	Graph() {}
-	void read_edge(char* address); // Read the graph file, input the address of the file. 
-	void read_R(char* address); // Read the R nodes set. 
-	void read_A(char* address); // Read the A nodes set. 
-	void get_densest(); // Get the nearly densest anchored subgraph using re-orientation network. 
-	void generateUpdateEdges(type updatenum);
-	set<type> updateedges;
+	int n, m;
+	Edge* e;
+	Set<int> R, A;
+	int* undeg, * bounty, * adj_length;
+	int** adj;
+	Set<int> V_A;
+	void read_graph_from_dataset(FILE* dataset_file);
+	bool read_R_and_A_set(FILE* R_file, FILE* A_file);
 
-	Edge* e; // Edges
-	type n, m; // Number of nodes and edges. 
-	type* d; // Indegree plus weight of nodes. 
-	type* undeg; // Undirected degree in G.
-	type** adj; // The adjacent edges of nodes. 
-	type* adj_length; // The length of the adjacent list of every single node, i.e., doubled degree of nodes. 
+	void initialize();
 
-	Set R, A; // R and A nodes set. 
-	type volR;
-	Set nownodes, allnodes;
-	Set NearDensest; // The nearly densest anchored subgraph we obtain. 
+	double allquery_ave_delete_time=0.0;
+	double allquery_ave_insert_time=0.0;
 
-	void init_max_d();
-	type max_d, max_d_number; bool max_d_changed;
-	inline void decrease_d(type u); // In the dynamic algorithms, if decrease a node's d, should invoke this function.
-	inline void increase_d(type u); // In the dynamic algorithms, if increase a node's d, should invoke this function.
-	void ProcessIncVertex(type u);
-	void ProcessDecVertex(type u, type now_max_d);
-	inline void reverse_edge(type eid);
 
-	Queue Q; // A queue used in BFS. 
+	Set<int> ReTestSubgraph; int ReTestSubgraphBounty;
+	void get_AADS();
 
-	type test_value, pivot; // The test value used in the re-orientation network, pivot = test_value - 1. 
-	type alpha;
-	void ReTest(type test_value);
-	inline bool density_ge_test_value();
-	Set ReTestSubgraph; // The dense subgraph that ReTest has found. 
-	type ReTestSubgraphEdge;
-	type* dist; // dist array denote "distance", used in BFS to store the distance between source and nodes. Besides, dist array also additionally replace the "visit" array, where dist[u] = -1 if u has not been visited. 
-	type* cur; // used in DinicDFS, functioning as a well-known optimizing method of Dinic algorithm. 
-	type* p; // p array denote "parent", used in DFS to reverse paths, storing the edge index of the BFS search tree. Besides, p array also additionally replace the "visit" array, where p[u] = -1 if u has not been visited. 
-	Set s_node; // Used in re-orientation, contain all nodes directly connect to source (i.e. d[u] < pivot). 
-	bool DinicBFS(); // Return whether source s can reach sink t. 
-	bool DinicDFS(type); // Return whether this recursion has found an augment path. 
+	int test_value, pivot, alpha;
+	Queue<int> Q;
+	Map<int> parent, cur, dist; Set<int> vis;
+	void ReTest(int test_value_);
+	bool DinicBFS();
+	bool DinicDFS(int u);
 
-	void ImproveDelete(type eid);
-	void ImproveInsert(type eid);
+	void get_update_edge(); set<int> edges_to_be_updated;
+	void maintain();
+	void edge_delete(int eid);
+	void edge_insert(int eid);
+	void IncBounty(int x);
+	void DecBounty(int x, int eid);
+	int count_bounty_in_set(Set<int>& S);
 
-	void output(char* output_file_address);
-	void output();
-	void display_all_edges();
+	void read_update_edge(FILE* dataset_file);
 
-	double mybd = 0.0;
-	double getlbfromSetR();
+	Set<int> S_alpha, S_alpha1; int S_alpha_bounty, S_alpha1_bounty;
+	void check_correctness();
+	void output_AADS();
+	void display();
 
-	type get_max_d(); // A simple function that returns the max indegree. 
-	bool check(); // Test whether the result graph is right, if so, output True. 
+	void reset();
 
 	~Graph() {
-		free(e); free(d); free(adj_length); free(cur); free(dist); free(p); free(undeg);
-
-		for (int i = 0; i < n; i++) {
+		free(e), free(undeg), free(bounty), free(adj_length);
+		for (int i = 0; i < n; i++)
 			free(adj[i]);
-		}
 		free(adj);
-
 	}
 };
+void Graph::reset() {
+	for (int i = 0; i < m; i++)
+		e[i].to = e[i].t2, e[i].exists = true;
+	memset(bounty, 0, n * sizeof(int));
+	R.clear(), A.clear(), V_A.clear();
+	ReTestSubgraph.clear(), Q.clear();
+	parent.clear(), cur.clear(), dist.clear(), vis.clear();
+	// edges_to_be_updated.clear();
+	S_alpha.clear(), S_alpha1.clear();
+}
 
-
-Graph* G;
-
-void Graph::read_edge(char* address) {
-	// Because the input file does not tell the algorithm how many edges there are, so the "e" array is incremented step by step, the constant value below defines the size of this "step". 
-	const type ARRAY_SIZE_INCREMENT = 500000;
-	type Emax = ARRAY_SIZE_INCREMENT; // The size of the "e" array.
-
-	FILE* file = fopen(address, "r");
+void Graph::read_graph_from_dataset(FILE* dataset_file) {
+	const int ARRAY_SIZE_INCREMENT = 500000;
+	int Emax = ARRAY_SIZE_INCREMENT;
 
 	n = m = 0;
 	e = (Edge*)malloc(Emax * sizeof(Edge));
 
-	// Repeatedly read a line (an edge), then convert this edge to two edges (a multiple edge). 
-	char line[200];
-	while (fgets(line, 200, file)) {
-		type i = 0;
+	char line[1000];
+	while (fgets(line, 200, dataset_file)) {
+		int i = 0;
 		e[m].t1 = e[m].t2 = 0;
 		while (line[i] < '0' || line[i] > '9') i++;
 		while (line[i] >= '0' && line[i] <= '9') e[m].t1 = e[m].t1 * 10 + line[i] - '0', i++;
 		while (line[i] < '0' || line[i] >'9') i++;
 		while (line[i] >= '0' && line[i] <= '9') e[m].t2 = e[m].t2 * 10 + line[i] - '0', i++;
-		n = max(n, max(e[m].t1, e[m].t2));
-		e[m].to = e[m].t1; e[m].exists = true;
+		n = max(n, max(e[m].t1, e[m].t2)); e[m].exists = true;
 		m++;
-		e[m].t2 = e[m - 1].t1, e[m].t1 = e[m - 1].t2;
-		e[m].to = e[m].t1; e[m].exists = true;
+		e[m].t2 = e[m - 1].t1, e[m].t1 = e[m - 1].t2; e[m].exists = true;
 		m++;
 		if (m + 1 >= Emax) {
 			Emax += ARRAY_SIZE_INCREMENT; // Increment the size of the "e" array. 
 			e = (Edge*)realloc(e, Emax * sizeof(Edge));
 		}
 	}
-	fclose(file);
+	fclose(dataset_file);
 
 	n++;
 
-	// Allocate memory for these arrays. 
 	e = (Edge*)realloc(e, m * sizeof(Edge));
-	d = (type*)malloc(n * sizeof(type)); memset(d, 0, n * sizeof(type));
-	dist = (type*)malloc(n * sizeof(type));
-	cur = (type*)malloc(n * sizeof(type));
-	p = (type*)malloc(n * sizeof(type));
-	adj = (type**)malloc(n * sizeof(type*));
-	adj_length = (type*)malloc(n * sizeof(type));
-	undeg = (type*)malloc(n * sizeof(type));
+	bounty = (int*)malloc(n * sizeof(int)); memset(bounty, 0, n * sizeof(int));
+	undeg = (int*)malloc(n * sizeof(int)); memset(undeg, 0, n * sizeof(int));
+	adj = (int**)malloc(n * sizeof(int*));
+	adj_length = (int*)malloc(n * sizeof(int));
+	undeg = (int*)malloc(n * sizeof(int));
 
-	//mem of d, dist, cur, p
+	R.alloc(n); A.alloc(n); ReTestSubgraph.alloc(n); Q.alloc(n); parent.alloc(n); vis.alloc(n); V_A.alloc(n); cur.alloc(n); dist.alloc(n); S_alpha.alloc(n); S_alpha.alloc(n); S_alpha1.alloc(n);
 
-	// Allocate memory for our array-implemented sets and queue. 
-	R.alloc(n); A.alloc(n); NearDensest.alloc(n); ReTestSubgraph.alloc(n); s_node.alloc(n); Q.alloc(n); nownodes.alloc(n); allnodes.alloc(n);
-
-	//mem of ReTestSubgraph, s_node, Q
-	// mem+=3*n* sizeof(type);
-
-	// Construct the arrays "adj" and "adj_length". 
-	type* now_edge_num = (type*)malloc(n * sizeof(type));
-	for (type i = 0; i < n; i++) adj_length[i] = now_edge_num[i] = 0;
-	for (type i = 0; i < m; i++) { adj_length[e[i].t1]++, adj_length[e[i].t2]++; }
-	for (type i = 0; i < n; i++) adj[i] = (type*)malloc(adj_length[i] * sizeof(type));
-	for (type i = 0; i < m; i++) {
-		type t1 = e[i].t1, t2 = e[i].t2;
+	int* now_edge_num = (int*)malloc(n * sizeof(int));
+	for (int i = 0; i < n; i++) adj_length[i] = now_edge_num[i] = 0;
+	for (int i = 0; i < m; i++) { adj_length[e[i].t1]++, adj_length[e[i].t2]++; }
+	for (int i = 0; i < n; i++) adj[i] = (int*)malloc(adj_length[i] * sizeof(int));
+	for (int i = 0; i < m; i++) {
+		int t1 = e[i].t1, t2 = e[i].t2;
 		adj[t1][now_edge_num[t1]++] = i;
 		adj[t2][now_edge_num[t2]++] = i;
 	}
 	free(now_edge_num);
 
-	for (type i = 0; i < n; i++) undeg[i] = adj_length[i] / 2;
+	for (int i = 0; i < n; i++) undeg[i] = adj_length[i] / 2;
 
-	// printf("n = %d, m = %d, ", n, m / 2);
 	return;
 }
-
-void Graph::read_R(char* address) {
-	FILE* file = fopen(address, "r");
-
-	// Repeatedly read a line (a node in R). 
-	char line[200];
-	while (fgets(line, 200, file)) {
-		type i = 0, tem = 0;
-		while (line[i] < '0' || line[i] > '9') i++;
-		while (line[i] >= '0' && line[i] <= '9') tem = tem * 10 + line[i] - '0', i++;
+char buf[10000];
+bool Graph::read_R_and_A_set(FILE* R_file, FILE* A_file) {
+	fgets(buf, 10000, R_file); int len = strlen(buf);
+	int pointer = 0;
+	while (pointer < len) {
+		int tem = 0;
+		while ((buf[pointer] < '0' || buf[pointer] > '9') && pointer < len) pointer++;
+		if (pointer >= len) break;
+		while (buf[pointer] >= '0' && buf[pointer] <= '9') tem = tem * 10 + buf[pointer] - '0', pointer++;
 		R.insert(tem);
 	}
-	fclose(file);
 
-	printf("|R| = %d, ", R.size);
-}
-
-char buff[4194304];
-
-vector<bool> RSetflag;
-type Rsettruecnt = 0;
-void read_RSet(char* address, type num) {
-	type querytimes = 0;
-	fstream finA(address, std::ios::in);
-	finA >> querytimes;
-	// cout<< querytimes<<endl;
-	RSet.resize(querytimes);
-	RSetflag.resize(querytimes, 1);
-	for (int i = 0; i < querytimes; i++) {
-		RSet[i].alloc(num);
-	}
-	// cout<<"emmmm"<<endl;
-	for (int i = 0; i < querytimes; i++)
-	{
-		finA >> buff;
-		// std::cout<<buff<<"\n";
-		char delims[] = ",";
-		char* res = strtok(buff, delims);
-		if (res) {
-			// std::cout<<"res="<<res<<std::endl;
-			// std::cout<<"res="<<stoi(res)<<std::endl;
-			RSet[i].insert(std::stoi(res));
-		}
-		while (res = strtok(NULL, delims)) {
-			// std::cout<<"res="<<res<<std::endl;
-			RSet[i].insert(std::stoi(res));
-		}
-		// std::sort(RSet[i].begin(), RSet[i].end());
-		// std::cout<<"check R"<<i<<std::endl;
-		// at least one edge check
-		bool flag = false;
-		for (int j = 0; j < RSet[i].size; j++)
-		{
-			for (int k = 0; k < RSet[i].size; k++)
-			{
-				if (j < k)
-				{
-					type u = RSet[i].nodes[j];
-					type v = RSet[i].nodes[k];
-					for (int j = 0; j < G->adj_length[u]; j++) {
-						Edge& ne = G->e[G->adj[u][j]];
-						if ((ne.t1 == u && ne.t2 == v) || (ne.t1 == v && ne.t2 == u)) {
-							flag = true;
-							break;
-						}
-					}
-				}
-				if (flag) {
-					break;
-				}
-			}
-			if (flag) {
-				break;
-			}
-		}
-		if (!flag) {
-			RSetflag[i] = 0;
-			Rsettruecnt++;
-		}
-		// std::cout<<"R"<<i<<"\t"<<flag<<std::endl;
-		// break;
-	}
-
-	finA.close();
-}
-
-
-void read_ASet(char* address, type num) {
-
-	type querytimes = 0;
-	fstream finA(address, std::ios::in);
-	finA >> querytimes;
-	// cout<< querytimes<<endl;
-	ASet.resize(querytimes);
-	for (int i = 0; i < querytimes; i++) {
-		ASet[i].alloc(num);
-	}
-	for (int i = 0; i < querytimes; i++) {
-		finA >> buff;
-		// std::cout<<buff<<"\n";
-		char delims[] = ",";
-		char* res = strtok(buff, delims);
-		if (res) {
-			// std::cout<<"res="<<res<<std::endl;
-			ASet[i].insert(std::stoi(res));
-		}
-		while (res = strtok(NULL, delims)) {
-			// std::cout<<"res="<<res<<std::endl;
-			ASet[i].insert(std::stoi(res));
-		}
-		// std::sort(RSet[i].begin(), RSet[i].end());
-		// std::cout<<"output A"<<i<<std::endl;
-		// for(int j=0; j<ASet[i].size; j++){
-		// 	std::cout<<ASet[i].nodes[j]<<"\t";
-		// }
-		// std::cout<<"\n";
-	}
-	finA.close();
-
-	// FILE* file = fopen(address, "r");
-	// // Repeatedly read a line (a node in R). 
-	// char line[200];
-	// fgets(line, 200, file);
-	// type i = 0, querytimes = 0;
-	// type querytimes=0;
-	// while (line[i] < '0' || line[i] > '9') i++;
-	// while (line[i] >= '0' && line[i] <= '9') querytimes = querytimes * 10 + line[i] - '0', i++;
-
-
-	// while (fgets(line, 200, file)) {
-	// 	type i = 0, tem = 0;
-	// 	while (line[i] < '0' || line[i] > '9') i++;
-	// 	while (line[i] >= '0' && line[i] <= '9') tem = tem * 10 + line[i] - '0', i++;
-	// 	RSet.insert(tem);
-	// }
-	// fclose(file);
-	// printf("|R| = %d, ", R.size);
-}
-
-
-void read_updateedges(char* address) {
-
-	type querytimes = 0;
-	fstream finA(address, std::ios::in);
-	finA >> querytimes;
-	// cout<< querytimes<<endl;
-	for (int i = 0; i < querytimes; i++) {
-		type eid;
-		finA >> eid;
-		totalupdateedges.insert(eid);
-	}
-	finA.close();
-}
-
-
-
-void Graph::read_A(char* address) {
-	FILE* file = fopen(address, "r");
-
-	// Repeatedly read a line (a node in A). 
-	char line[200];
-	while (fgets(line, 200, file)) {
-		type i = 0, tem = 0;
-		while (line[i] < '0' || line[i] > '9') i++;
-		while (line[i] >= '0' && line[i] <= '9') tem = tem * 10 + line[i] - '0', i++;
+	buf[0] = '\0';
+	fgets(buf, 10000, A_file); len = strlen(buf);
+	pointer = 0;
+	while (pointer < len) {
+		int tem = 0;
+		while ((buf[pointer] < '0' || buf[pointer] > '9') && pointer < len) pointer++;
+		if (pointer >= len) break;
+		while (buf[pointer] >= '0' && buf[pointer] <= '9') tem = tem * 10 + buf[pointer] - '0', pointer++;
 		A.insert(tem);
 	}
-	fclose(file);
 
-	printf("|A| = %d\n", A.size);
-}
+	// Insert many nodes to A, to test the correctness of our algorithms.
+	/*for (int u = 1; u <= 10000; u += 200) {
+		R.insert(u), A.insert(u);
+	}*/
 
-void Graph::get_densest() {
+	int edges_in_R = 0;
 	for (int i = 0; i < R.size; i++) {
 		int u = R.nodes[i];
 		for (int j = 0; j < adj_length[u]; j++) {
 			Edge& ne = e[adj[u][j]];
 			int v = ne.t1 == u ? ne.t2 : ne.t1;
-			if (R.in[v])
-				printf("%d %d\n", u, v);
+			if (!R.in[v]) continue;
+			if (ne.t1 == u)
+				edges_in_R++;
 		}
 	}
+	printf("- %-30s: %d\n", "Number of Edges in R", edges_in_R);
+	if(edges_in_R<=0){
+		return false;
+	}
+	return true;
 
-	// Initiate the d array and edges in R set. 
-	volR = 0;
-	for (type i = 0; i < R.size; i++) {
-		type u = R.nodes[i];
-		volR += undeg[u];
-		allnodes.insert(u);
-		if (A.in[u]) d[u] = undeg[u] + INF;
-		else d[u] = undeg[u];
+	// check(edges_in_R > 0, "E(R) is empty!");
+}
+void Graph::initialize() {
+	for (int i = 0; i < R.size; i++) {
+		int u = R.nodes[i];
+		V_A.insert(u);
+		bounty[u] = undeg[u];
+		if (A.in[u])
+			bounty[u] += INF;
+	}
+}
+void Graph::get_AADS() {
+	int alpha_l = 0, alpha_u = 0; for (int i = 0; i < R.size; i++) alpha_u = max(alpha_u, undeg[R.nodes[i]]);
+
+	// cout<<"alpha_l = " << alpha_l<<endl;
+	// cout<<"alpha_u = " << alpha_u<<endl;
+
+	while (alpha_l < alpha_u) {
+		int alpha_m = (alpha_l + alpha_u + 1) / 2;
+		// cout<<"alpha_m = " << alpha_m<<endl;
+		ReTest(alpha_m);
+		// cout<<"ReTestSubgraphBounty = " << ReTestSubgraphBounty <<endl;
+		if (ReTestSubgraphBounty > (alpha_m - 1) * ReTestSubgraph.size) alpha_l = alpha_m;
+		else alpha_u = alpha_m - 1;
+
+		// cout<<"alpha_l = " << alpha_l<<endl;
+		// cout<<"alpha_u = " << alpha_u<<endl;
+	}
+	alpha = alpha_l;
+	// cout<<"alpha = " << alpha<<endl;
+	if (alpha == 1) {
+		printf("Alpha = 1 is too low, contracdicting the assumption of the paper!\n");
+		return;
 	}
 
-	type du, dl;
-	// First get the binary search range du and dl, the answer is in (dl, du]. 
-	dl = du = 0;
-	for (type i = 0; i < R.size; i++) du = du >= adj_length[R.nodes[i]] / 2 ? du : adj_length[R.nodes[i]] / 2;
-
-	dl = (type)ceil(getlbfromSetR()) - 1;
-
-	// Start binary search. 
-	while (dl < du) {
-		type dm = (dl + du + 1) / 2;
-		ReTest(dm);
-		if (density_ge_test_value()) dl = dm;
-		else du = dm - 1;
-	}
-	type ans = dl;
-
-	// Now we have the ans, which equals to the round-up value of the nearly densest anchored subgraph. 
-	// Next invoke ReTest(ans) once and the ReTestSubgraph is the NearDensest we want. 
-	ReTest(ans);
-	NearDensest.insert(ReTestSubgraph);
-
-	alpha = ans;
-
-	// cout<<ans<<endl;
+	ReTest(alpha);
+	for (int i = 0; i < ReTestSubgraph.size; i++) S_alpha.insert(ReTestSubgraph.nodes[i]);
 
 	return;
 }
-
-void Graph::generateUpdateEdges(type updatenum) {
-	srand(0);
-	while (updateedges.size() < updatenum) {
-		type ueid = (rand() % (m));
-		if (ueid % 2 == 1)
-			ueid--;
-		updateedges.insert(ueid);
-	}
-}
-
-inline bool Graph::density_ge_test_value() {
-	return ReTestSubgraphEdge > (test_value - 1) * ReTestSubgraph.size;
-}
-
-void Graph::init_max_d() {
-	for (type i = 0; i < n; i++)
-		if (undeg[i] >= volR)
-			d[i] -= INF;
-	max_d = 0;
-	for (type i = 0; i < allnodes.size; i++) {
-		type u = allnodes.nodes[i];
-		// if (A.in[u]) continue;
-		int nowd = A.in[u] ? d[u] - INF : d[u];
-		if (nowd > max_d)
-			max_d = nowd, max_d_number = 0;
-		if (nowd == max_d)
-			max_d_number++;
-	}
-}
-
-inline void Graph::decrease_d(type u) {
-	if (d[u] == max_d)
-		max_d_number--, max_d_changed = true;
-	d[u]--;
-	if (max_d_number == 0) {
-		max_d = 0;
-		for (type i = 0; i < allnodes.size; i++) {
-			u = allnodes.nodes[i];
-			if (A.in[u]) continue;
-			if (d[u] > max_d)
-				max_d = d[u], max_d_number = 0;
-			if (d[u] == max_d)
-				max_d_number++;
-		}
-	}
-}
-
-inline void Graph::increase_d(type u) {
-	if (!allnodes.in[u])
-		allnodes.insert(u);
-	d[u]++;
-	if (A.in[u])
-		return;
-	if (d[u] > max_d)
-		max_d = d[u], max_d_number = 1, max_d_changed = true;
-	else if (d[u] == max_d)
-		max_d_number++, max_d_changed = true;
-}
-
-inline void Graph::reverse_edge(type eid) {
-	type from = e[eid].t1 == e[eid].to ? e[eid].t2 : e[eid].t1;
-	increase_d(from);
-	decrease_d(e[eid].to);
-	e[eid].to = from;
-}
-
-void Graph::ProcessIncVertex(type u) {
-	if (d[u] == max_d) {
-		Q.clear();
-		for (type i = 0; i > allnodes.size; i++) {
-			type x = allnodes.nodes[i];
-			p[x] = -1;
-		}
-		Q.push(u); p[u] = -2;
-		type tar = -1;
-		while (!Q.empty()) {
-			type x = Q.pop();
-			for (type j = 0; j < adj_length[x]; j++) {
-				Edge& ne = e[adj[x][j]];
-				if (!ne.exists) continue;
-				if (ne.to != x) continue;
-				type from = ne.t1 == x ? ne.t2 : ne.t1;
-				if (d[from] <= max_d - 2) {
-					p[from] = adj[x][j]; tar = from; break;
-				}
-				if (p[from] != -1) continue;
-				p[from] = adj[x][j];
-				Q.push(from);
-			}
-			if (tar != -1)
-				break;
-		}
-		if (tar != -1) {
-			while (tar != u) {
-				type tem = e[p[tar]].to;
-				reverse_edge(p[tar]);
-				tar = tem;
-			}
-		}
-	}
-}
-
-void Graph::ProcessDecVertex(type u, type now_max_d) {
-	if (d[u] >= max_d - 2) {
-		Q.clear();
-		for (type i = 0; i < allnodes.size; i++) {
-			type x = allnodes.nodes[i];
-			p[x] = -1;
-		}
-		Q.push(u); p[u] = -2;
-		type tar = -1;
-		while (!Q.empty()) {
-			type x = Q.pop();
-			for (type j = 0; j < adj_length[x]; j++) {
-				Edge& ne = e[adj[x][j]];
-				if (!ne.exists) continue;
-				if (ne.to == x) continue;
-				if (d[ne.to] == max_d) {
-					p[ne.to] = adj[x][j]; tar = ne.to; break;
-				}
-				if (p[ne.to] != -1) continue;
-				p[ne.to] = adj[x][j];
-				Q.push(ne.to);
-			}
-			if (tar != -1)
-				break;
-		}
-		if (tar != -1) {
-			while (tar != u) {
-				reverse_edge(p[tar]);
-				tar = e[p[tar]].to;
-			}
-		}
-	}
-
-	if (max_d < now_max_d)
-		ReTest(now_max_d - 1);
-}
-
-void Graph::ReTest(type test_value_) {
+void Graph::ReTest(int test_value_) {
 	test_value = test_value_; pivot = test_value - 1;
-	// cout << pivot << endl;
 
 	if (test_value == 1) {
-		ReTestSubgraph.clear();
-		ReTestSubgraph.insert(R);
+		ReTestSubgraph.clear(); for (int i = 0; i < R.size; i++) ReTestSubgraph.insert(R.nodes[i]);
 		goto compute;
 	}
 
-	nownodes.clear();
-	for (type i = 0; i < allnodes.size; i++) {
-		type u = allnodes.nodes[i];
-		if (d[u] >= pivot && undeg[u] < volR)
-			nownodes.insert(u);
-	}
-
 	while (DinicBFS()) {
-		for (type i = 0; i < nownodes.size; i++) {
-			type u = nownodes.nodes[i];
-			p[u] = -1; cur[u] = 0;
-		}
-		for (type i = 0; i < s_node.size; i++) {
-			DinicDFS(s_node.nodes[i]);
+		parent.clear(); cur.clear();
+		for (int i = 0; i < V_A.size; i++) {
+			int u = V_A.nodes[i];
+			if (bounty[u] > pivot)
+				parent[u] = -2, cur[u] = 0, DinicDFS(u);
 		}
 	}
 
-	// Now, the ReTestSubgraph equals to all nodes reachable to a node u, where d[u] >= pivot + 1. Next we compute it. 
-	ReTestSubgraph.clear(); Q.clear();
-	for (type i = 0; i < nownodes.size; i++) {
-		type u = nownodes.nodes[i];
-		if (d[u] >= pivot + 1 && undeg[u] < volR)
-			dist[u] = 1, Q.push(u), ReTestSubgraph.insert(u);
-		else
-			dist[u] = 0;
+	ReTestSubgraph.clear(); Q.clear(); vis.clear();
+	for (int i = 0; i < V_A.size; i++) {
+		int u = V_A.nodes[i];
+		if (bounty[u] > pivot)
+			vis.insert(u), Q.push(u), ReTestSubgraph.insert(u);
 	}
 
-	while (!Q.empty()) { // Start from nodes with d[] > pivot, traversing reversely. 
-		type u = Q.pop();
-		for (type i = 0; i < adj_length[u]; i++) {
+	while (!Q.empty()) {
+		int u = Q.pop();
+		for (int i = 0; i < adj_length[u]; i++) {
 			Edge& ne = e[adj[u][i]];
 			if (!ne.exists) continue;
 			if (ne.to != u) continue;
-			type from = ne.to == ne.t1 ? ne.t2 : ne.t1;
-			if (dist[from]) continue;
-			dist[from] = 1; Q.push(from); ReTestSubgraph.insert(from);
+			int from = ne.to == ne.t1 ? ne.t2 : ne.t1;
+			if (vis.in[from]) continue;
+			vis.insert(from); Q.push(from); ReTestSubgraph.insert(from);
 		}
 	}
 
-	// Compute the number of edges in ReTestSubgraph, for computing its density.
 compute:
-	type Edgenumber = 0, penalty = 0;
-	for (type i = 0; i < ReTestSubgraph.size; i++) {
-		type u = ReTestSubgraph.nodes[i];
+	int Edgenumber = 0, penalty = 0;
+	for (int i = 0; i < ReTestSubgraph.size; i++) {
+		int u = ReTestSubgraph.nodes[i];
 		if (!R.in[u]) penalty += undeg[u];
-		for (type j = 0; j < adj_length[u]; j++) {
+		for (int j = 0; j < adj_length[u]; j++) {
 			Edge& ne = e[adj[u][j]];
 			if (!ne.exists) continue;
-			type v = ne.t1 == u ? ne.t2 : ne.t1;
+			int v = ne.t1 == u ? ne.t2 : ne.t1;
 			if (!ReTestSubgraph.in[v]) continue;
 			Edgenumber++;
 		}
 	}
-	ReTestSubgraphEdge = Edgenumber / 2 - penalty;
-
+	// cout<<"Edgenumber = " << Edgenumber <<endl;
+	// cout<<"penalty = " << penalty <<endl;
+	ReTestSubgraphBounty = Edgenumber / 2 - penalty;
+	// cout<<"ReTestSubgraphBounty = " << ReTestSubgraphBounty <<endl;
 	return;
 }
-
 bool Graph::DinicBFS() {
-	// Obtain the s_node set. 
-	s_node.clear();
-	for (type i = 0; i < nownodes.size; i++) if (d[nownodes.nodes[i]] > pivot && undeg[nownodes.nodes[i]] < volR) s_node.insert(nownodes.nodes[i]);
+	int dist_t = INF;
 
-	type dist_t = INF; // The distance from source s to sink t. 
-
-	// Initialize queue and some arrays. 
-	Q.clear();
-	for (type i = 0; i < nownodes.size; i++) {
-		dist[nownodes.nodes[i]] = -1;
+	Q.clear(); dist.clear();
+	for (int i = 0; i < V_A.size; i++) {
+		int u = V_A.nodes[i];
+		if (bounty[u] > pivot)
+			dist[u] = 1, Q.push(u);
 	}
-	for (type i = 0; i < s_node.size; i++) dist[s_node.nodes[i]] = 1, Q.push(s_node.nodes[i]);
 
-	// Start traversal. 
 	bool break_loop = false;
 	while (!Q.empty()) {
-		type u = Q.pop();
-		for (type i = 0; i < adj_length[u]; i++) {
+		int u = Q.pop();
+		for (int i = 0; i < adj_length[u]; i++) {
 			Edge& ne = e[adj[u][i]];
 			if (!ne.exists) continue;
 			if (ne.to != u) continue;
-			type from = ne.t1 == u ? ne.t2 : ne.t1;
-			if (d[from] < pivot || undeg[from] >= volR) {
+			int from = ne.t1 == u ? ne.t2 : ne.t1;
+			if (bounty[from] < pivot) {
 				dist_t = dist[u] + 2; break_loop = true; break;
 			}
-			if (dist[from] != -1) continue;
+			if (dist.in[from]) continue;
 			dist[from] = dist[u] + 1;
 			Q.push(from);
 		}
@@ -648,460 +339,455 @@ bool Graph::DinicBFS() {
 	}
 	return dist_t != INF;
 }
-
-bool Graph::DinicDFS(type u)
+bool Graph::DinicDFS(int u)
 {
-	if (d[u] < pivot || undeg[u] >= volR) {
-		d[u]++; d[e[p[u]].to]--; e[p[u]].to = u;
-		if (undeg[u] < volR && !allnodes.in[u])
-			allnodes.insert(u);
-		if (d[u] == pivot && undeg[u] < volR)
-			nownodes.insert(u);
+	if (bounty[u] < pivot) {
+		bounty[u]++; bounty[e[parent[u]].to]--; e[parent[u]].to = u;
+		if (!V_A.in[u])
+			V_A.insert(u);
 		return true;
 	}
-	for (type& i = cur[u]; i < adj_length[u]; i++) {
+	for (int& i = cur[u]; i < adj_length[u]; i++) {
 		Edge& ne = e[adj[u][i]];
 		if (!ne.exists) continue;
 		if (ne.to != u) continue;
-		type from = ne.t1 == u ? ne.t2 : ne.t1;
-		if ((dist[from] != dist[u] + 1) && !(d[from] < pivot || undeg[from] >= volR)) continue;
-		p[from] = adj[u][i];
+		int from = ne.t1 == u ? ne.t2 : ne.t1;
+		if ((!dist.in[from] || dist[from] != dist[u] + 1) && !(bounty[from] < pivot)) continue;
+		parent[from] = adj[u][i], cur[from] = 0;
 		if (DinicDFS(from)) {
-			if (s_node.in[u]) {
-				if (d[u] == pivot && undeg[u] < volR) return true; // This means arc (s, u) has been saturated, so we can return. 
-				continue; // This means arc (s, u) has not been saturated, so we continue to search for augment path from u. 
+			if (parent[u] == -2) {
+				if (bounty[u] == pivot) return true;
+				continue;
 			}
-			d[u]++; d[e[p[u]].to]--; e[p[u]].to = u;
+			bounty[u]++; bounty[e[parent[u]].to]--; e[parent[u]].to = u;
+			if (!V_A.in[u])
+				V_A.insert(u);
 			return true;
 		}
 	}
 	return false;
 }
+void Graph::get_update_edge() {
+	edges_to_be_updated.clear();
+	int updated_number = 10000;
+	while (edges_to_be_updated.size() < updated_number) {
+		edges_to_be_updated.insert((rand() % (m / 2)) * 2);
+	}
+}
 
-void Graph::ImproveDelete(type eid) {
-	max_d_changed = false;
+void Graph::read_update_edge(FILE* dataset_file){
+	edges_to_be_updated.clear();
+	int updated_number = 10000;
+	char line[1000];
+	fgets(line, 200, dataset_file);
+	
+	while (fgets(line, 200, dataset_file)) {
+		int i = 0;
+		int eid=0;
+		while (line[i] < '0' || line[i] > '9') i++;
+		while (line[i] >= '0' && line[i] <= '9') eid = eid * 10 + line[i] - '0', i++;	
+		edges_to_be_updated.insert(eid);
+		// cout<<eid<<endl;
+	}
+	fclose(dataset_file);
 
-	type u = e[eid].t1, v = e[eid].t2;
+}
 
+
+
+void Graph::maintain() {
+	ReTest(alpha); S_alpha = ReTestSubgraph; S_alpha_bounty = ReTestSubgraphBounty;
+	ReTest(alpha + 1); S_alpha1 = ReTestSubgraph; S_alpha1_bounty = ReTestSubgraphBounty;
+
+	//if (true) { //DEBUG
+	//	printf("Original\n");
+	//	for (int i = 0; i < S_alpha1.size; i++) {
+	//		int u = S_alpha1.nodes[i];
+	//		printf("u = %d, bounty[u] = %d\n", u, bounty[u]);
+	//	}
+	//}
+
+	Timer insert_timer, delete_timer; double insert_total_time = 0.0, delete_total_time = 0.0;
+	int count_updated_edges = 0;
+
+	int ori_S_alpha_size = S_alpha.size, ori_S_alpha1_size = S_alpha1.size, ori_S_alpha_bounty = S_alpha_bounty, ori_S_alpha1_bounty = S_alpha1_bounty;
+	for (auto eid : edges_to_be_updated) {
+		count_updated_edges++;
+
+		//if (eid == 48288) // DEBUG
+		//	eid = eid;
+
+		//printf("eid = %d\n", eid); // DEBUG
+		//if (eid == 53954) { //DEBUG
+		//	printf("Before delete\n");
+		//	for (int i = 0; i < S_alpha1.size; i++) {
+		//		int u = S_alpha1.nodes[i];
+		//		printf("u = %d, bounty[u] = %d\n", u, bounty[u]);
+		//	}
+		//}
+
+		delete_timer.start();
+		edge_delete(eid);
+		delete_timer.end(); delete_total_time += delete_timer.time();
+		allquery_ave_delete_time+=delete_timer.time();
+		//if (eid == 53954) { //DEBUG
+		//	printf("After delete\n");
+		//	for (int i = 0; i < S_alpha1.size; i++) {
+		//		int u = S_alpha1.nodes[i];
+		//		printf("u = %d, bounty[u] = %d\n", u, bounty[u]);
+		//	}
+		//}
+		//if (eid == 5838) { // DEBUG
+		//	printf("After delete\n");
+		//	for (int j = 0; j < adj_length[353]; j++) {
+		//		Edge& ne = e[adj[353][j]];
+		//		int t = ne.t1 == 353 ? ne.t2 : ne.t1;
+		//		printf("eid = %d, t = %d, ne.to = %d, S_alpha.in[t] = %d, S_alpha1.in[t] = %d, bounty[t] = %d\n", adj[353][j], t, ne.to, S_alpha.in[t], S_alpha1.in[t], bounty[t]);
+		//	}
+		//}
+		// check_correctness();
+
+		//check_correctness();
+
+		insert_timer.start();
+		edge_insert(eid);
+		insert_timer.end(); insert_total_time += insert_timer.time();
+		allquery_ave_insert_time+=insert_timer.time();
+		//if (eid == 53954) { //DEBUG
+		//	printf("After Insert\n");
+		//	for (int i = 0; i < S_alpha1.size; i++) {
+		//		int u = S_alpha1.nodes[i];
+		//		printf("u = %d, bounty[u] = %d\n", u, bounty[u]);
+		//	}
+		//}
+		//if (eid == 5838) { // DEBUG
+		//	printf("After insert\n");
+		//	for (int j = 0; j < adj_length[353]; j++) {
+		//		Edge& ne = e[adj[353][j]];
+		//		int t = ne.t1 == 353 ? ne.t2 : ne.t1;
+		//		printf("eid = %d, t = %d, ne.to = %d, S_alpha.in[t] = %d, S_alpha1.in[t] = %d, bounty[t] = %d\n", adj[353][j], t, ne.to, S_alpha.in[t], S_alpha1.in[t], bounty[t]);
+		//	}
+		//}
+
+		//check_correctness();
+
+		check(ori_S_alpha_size == S_alpha.size && ori_S_alpha1_size == S_alpha1.size && ori_S_alpha_bounty == S_alpha_bounty && ori_S_alpha1_bounty == S_alpha1_bounty, "original != processed");
+	}
+
+	printf("- %-30s: %d\n", "Number of updated edges", count_updated_edges);
+	printf("- %-30s: %lf\n", "Dynamic Total insert runtime", insert_total_time);
+	printf("- %-30s: %lf\n", "Dynamic Total delete runtime", delete_total_time);
+	// printf("- %-30s: %lf\n", "Dynamic Average insert runtime", insert_total_time / count_updated_edges);
+	// printf("- %-30s: %lf\n", "Dynamic Average delete runtime", delete_total_time / count_updated_edges);
+}
+void Graph::edge_delete(int eid) {
+	check(e[eid].exists && e[eid + 1].exists, "The edge to be deleted does not exist");
+	int u = e[eid].t1, v = e[eid].t2;
 	undeg[u]--, undeg[v]--;
+	if (!R.in[u]) IncBounty(u); if (!R.in[v]) IncBounty(v);
+	DecBounty(e[eid].to, eid);
+	DecBounty(e[eid + 1].to, eid + 1);
 
-	if (!R.in[u]) {
-		increase_d(u);
-		ProcessIncVertex(u);
+	if (bounty[u] > 0 && !V_A.in[u]) V_A.insert(u);
+	if (bounty[v] > 0 && !V_A.in[v]) V_A.insert(v);
+
+	if (S_alpha1_bounty > alpha * S_alpha1.size) {
+		S_alpha = S_alpha1, S_alpha_bounty = S_alpha1_bounty;
+		ReTest(alpha + 2); S_alpha1 = ReTestSubgraph, S_alpha1_bounty = ReTestSubgraphBounty;
+		alpha++;
 	}
-	if (!R.in[v]) {
-		increase_d(v);
-		ProcessIncVertex(v);
+	else if (S_alpha_bounty <= (alpha - 1) * S_alpha.size) {
+		S_alpha1 = S_alpha, S_alpha1_bounty = S_alpha_bounty;
+		ReTest(alpha - 1); S_alpha = ReTestSubgraph, S_alpha_bounty = ReTestSubgraphBounty;
+		alpha--;
 	}
-
-	type x, y;
-	if (e[eid].to == e[eid].t1) x = e[eid].t2, y = e[eid].t1;
-	else x = e[eid].t1, y = e[eid].t2;
-	e[eid].exists = false;
-	decrease_d(y);
-	ProcessDecVertex(y, max_d);
-
-	eid++;
-	if (e[eid].to == e[eid].t1) x = e[eid].t2, y = e[eid].t1;
-	else x = e[eid].t1, y = e[eid].t2;
-	e[eid].exists = false;
-	decrease_d(y);
-	ProcessDecVertex(y, max_d);
-
-	if (max_d_changed) {
-		NearDensest.clear(); Q.clear();
-		for (type i = 0; i < allnodes.size; i++) {
-			type t = allnodes.nodes[i];
-			if (d[t] >= max_d)
-				dist[t] = 1, Q.push(t), NearDensest.insert(t);
-			else
-				dist[t] = 0;
-		}
-		while (!Q.empty()) {
-			type t = Q.pop();
-			for (type j = 0; j < adj_length[t]; j++) {
-				Edge& ne = e[adj[t][j]];
-				if (!ne.exists) continue;
-				if (ne.to != t) continue;
-				type from = ne.to == ne.t1 ? ne.t2 : ne.t1;
-				if (dist[from]) continue;
-				dist[from] = 1; Q.push(from); NearDensest.insert(from);
-			}
-		}
-	}
-
-	return;
 }
-
-void Graph::ImproveInsert(type eid) {
-	max_d_changed = false;
-	type u = e[eid].t1, v = e[eid].t2;
-
+void Graph::edge_insert(int eid) {
+	check(!e[eid].exists && !e[eid + 1].exists, "The edge to be inserted exists");
+	int u = e[eid].t1, v = e[eid].t2;
 	undeg[u]++, undeg[v]++;
+	if (!R.in[u]) DecBounty(u, -1); if (!R.in[v]) DecBounty(v, -1);
 
-	if (!R.in[u]) {
-		decrease_d(u);
-		ProcessDecVertex(u, max_d);
-	}
-	if (!R.in[v]) {
-		decrease_d(v);
-		ProcessDecVertex(v, max_d);
-	}
-
-	type x, y;
-	if (d[u] >= d[v]) x = u, y = v;
+	int x, y;
+	if ((S_alpha1.in[u] && !S_alpha1.in[v]) || (S_alpha.in[u] && !S_alpha.in[v])) x = u, y = v;
 	else x = v, y = u;
-	e[eid].exists = true; e[eid].to = y;
-	increase_d(y);
-	ProcessIncVertex(y);
+	e[eid].exists = true, e[eid].to = y;
+	IncBounty(y);
 
-	eid++;
-	if (d[u] >= d[v]) x = u, y = v;
+	if ((S_alpha1.in[u] && !S_alpha1.in[v]) || (S_alpha.in[u] && !S_alpha.in[v])) x = u, y = v;
 	else x = v, y = u;
-	e[eid].exists = true; e[eid].to = y;
-	increase_d(y);
-	ProcessIncVertex(y);
+	e[eid + 1].exists = true, e[eid + 1].to = y;
+	IncBounty(y);
 
-	if (max_d_changed) {
-		NearDensest.clear(); Q.clear();
-		for (type i = 0; i < allnodes.size; i++) {
-			type t = allnodes.nodes[i];
-			if (d[t] >= max_d)
-				dist[t] = 1, Q.push(t), NearDensest.insert(t);
-			else
-				dist[t] = 0;
-		}
+	if (bounty[u] > 0 && !V_A.in[u]) V_A.insert(u);
+	if (bounty[v] > 0 && !V_A.in[v]) V_A.insert(v);
+
+	if (S_alpha1_bounty > alpha * S_alpha1.size) {
+		S_alpha = S_alpha1, S_alpha_bounty = S_alpha1_bounty;
+		ReTest(alpha + 2); S_alpha1 = ReTestSubgraph, S_alpha1_bounty = ReTestSubgraphBounty;
+		alpha++;
+	}
+	else if (S_alpha_bounty <= (alpha - 1) * S_alpha.size) {
+		S_alpha1 = S_alpha, S_alpha1_bounty = S_alpha_bounty;
+		ReTest(alpha - 1); S_alpha = ReTestSubgraph, S_alpha_bounty = ReTestSubgraphBounty;
+		alpha--;
+	}
+}
+void Graph::IncBounty(int x) {
+	bounty[x]++; if (S_alpha.in[x]) S_alpha_bounty++; if (S_alpha1.in[x]) S_alpha1_bounty++;
+	if (bounty[x] == alpha && !S_alpha.in[x]) {
+		Q.clear(), parent.clear(); Q.push(x), parent[x] = -1; int y = -1; bool break_loop = false;
 		while (!Q.empty()) {
-			type t = Q.pop();
-			for (type j = 0; j < adj_length[t]; j++) {
-				Edge& ne = e[adj[t][j]];
-				if (!ne.exists) continue;
-				if (ne.to != t) continue;
-				type from = ne.to == ne.t1 ? ne.t2 : ne.t1;
-				if (dist[from]) continue;
-				dist[from] = 1; Q.push(from); NearDensest.insert(from);
+			int u = Q.pop();
+			for (int j = 0; j < adj_length[u]; j++) {
+				Edge& ne = e[adj[u][j]]; if (ne.to != u || !ne.exists) continue; int from = ne.to == ne.t1 ? ne.t2 : ne.t1;
+				if (S_alpha.in[from] || parent.in[from]) continue; parent[from] = adj[u][j];
+				if (bounty[from] <= alpha - 2) { y = from, break_loop = true; break; }
+				Q.push(from);
+			}
+			if (break_loop) break;
+		}
+		if (y != -1) { int now = y; while (now != x) swap(e[parent[now]].to, now); bounty[x]--, bounty[y]++; }
+		else {
+			for (int i = 0; i < parent.size; i++) check(!S_alpha.in[parent.nodes[i]], "S_alpha error"), S_alpha.insert(parent.nodes[i]);
+			S_alpha_bounty = count_bounty_in_set(S_alpha);
+		}
+	}
+	else if (bounty[x] == alpha + 1 && S_alpha.in[x] && !S_alpha1.in[x]) {
+		Q.clear(), parent.clear(); Q.push(x), parent[x] = -1; int y = -1; bool break_loop = false;
+		while (!Q.empty()) {
+			int u = Q.pop();
+			for (int j = 0; j < adj_length[u]; j++) {
+				Edge& ne = e[adj[u][j]]; if (ne.to != u || !ne.exists) continue; int from = ne.to == ne.t1 ? ne.t2 : ne.t1;
+				if (S_alpha1.in[from] || parent.in[from]) continue; parent[from] = adj[u][j];
+				check(S_alpha.in[from], "S_alpha error V \\ S_alpha");
+				if (bounty[from] <= alpha - 1) { y = from, break_loop = true; break; }
+				Q.push(from);
+			}
+			if (break_loop) break;
+		}
+		if (y != -1) { int now = y; while (now != x) swap(e[parent[now]].to, now); bounty[x]--, bounty[y]++; }
+		else {
+			for (int i = 0; i < parent.size; i++) check(!S_alpha1.in[parent.nodes[i]], "S_alpha error"), S_alpha1.insert(parent.nodes[i]);
+			S_alpha1_bounty = count_bounty_in_set(S_alpha1);
+		}
+	}
+}
+void Graph::DecBounty(int x, int eid) {
+	bounty[x]--; if (S_alpha.in[x]) S_alpha_bounty--; if (S_alpha1.in[x]) S_alpha1_bounty--;
+	if (S_alpha1.in[x]) {
+		if (bounty[x] == alpha - 1) {
+			Q.clear(), parent.clear(); Q.push(x), parent[x] = -1; int y = -1; bool break_loop = false;
+			while (!Q.empty()) {
+				int u = Q.pop();
+				for (int j = 0; j < adj_length[u]; j++) {
+					Edge& ne = e[adj[u][j]]; if (ne.to == u || !ne.exists) continue;
+					if (!S_alpha1.in[ne.to] || parent.in[ne.to]) continue; parent[ne.to] = adj[u][j];
+					if (bounty[ne.to] >= alpha + 1) { y = ne.to, break_loop = true; break; }
+					Q.push(ne.to);
+				}
+				if (break_loop) break;
+			}
+			check(y != -1, "can not find y");
+			int now = y;
+			while (now != x) { Edge& ne = e[parent[now]]; int from = ne.to == ne.t1 ? ne.t2 : ne.t1; ne.to = now = from; }
+			bounty[x]++, bounty[y]--;
+		}
+		if (eid != -1) e[eid].exists = false;
+		Q.clear(), vis.clear(); for (int i = 0; i < S_alpha1.size; i++) if (bounty[S_alpha1.nodes[i]] >= alpha + 1) Q.push(S_alpha1.nodes[i]), vis.insert(S_alpha1.nodes[i]);
+		while (!Q.empty()) {
+			int u = Q.pop();
+			for (int j = 0; j < adj_length[u]; j++) {
+				Edge& ne = e[adj[u][j]]; if (ne.to != u || !ne.exists) continue; int from = ne.to == ne.t1 ? ne.t2 : ne.t1;
+				if (vis.in[from]) continue; check(S_alpha1.in[from], "S_alpha1 error");
+				Q.push(from), vis.insert(from);
 			}
 		}
+		S_alpha1 = vis; S_alpha1_bounty = count_bounty_in_set(S_alpha1);
 	}
-
-	return;
+	else if (S_alpha.in[x] && !S_alpha1.in[x]) {
+		if (bounty[x] == alpha - 2) {
+			Q.clear(), parent.clear(); Q.push(x), parent[x] = -1; int y = -1; bool break_loop = false;
+			while (!Q.empty()) {
+				int u = Q.pop();
+				for (int j = 0; j < adj_length[u]; j++) {
+					Edge& ne = e[adj[u][j]]; if (ne.to == u || !ne.exists) continue;
+					if (!S_alpha.in[ne.to] || parent.in[ne.to]) continue; parent[ne.to] = adj[u][j];
+					check(!S_alpha1.in[ne.to], "E_\\times(S_alpha, S_alpha1) error");
+					if (bounty[ne.to] >= alpha) { y = ne.to, break_loop = true; break; }
+					Q.push(ne.to);
+				}
+				if (break_loop) break;
+			}
+			check(y != -1, "can not find y");
+			int now = y;
+			while (now != x) { Edge& ne = e[parent[now]]; int from = ne.to == ne.t1 ? ne.t2 : ne.t1; ne.to = now = from; }
+			bounty[x]++, bounty[y]--;
+		}
+		if (eid != -1) e[eid].exists = false;
+		Q.clear(), vis.clear(); for (int i = 0; i < S_alpha.size; i++) if (!S_alpha1.in[S_alpha.nodes[i]] && bounty[S_alpha.nodes[i]] >= alpha) Q.push(S_alpha.nodes[i]), vis.insert(S_alpha.nodes[i]);
+		while (!Q.empty()) {
+			int u = Q.pop();
+			for (int j = 0; j < adj_length[u]; j++) {
+				Edge& ne = e[adj[u][j]]; if (ne.to != u || !ne.exists) continue; int from = ne.to == ne.t1 ? ne.t2 : ne.t1;
+				if (vis.in[from] || S_alpha1.in[from]) continue; check(S_alpha.in[from], "S_alpha error");
+				Q.push(from), vis.insert(from);
+			}
+		}
+		S_alpha = S_alpha1;
+		for (int i = 0; i < vis.size; i++) check(!S_alpha.in[vis.nodes[i]], "S_alpha and vis error"), S_alpha.insert(vis.nodes[i]);
+		S_alpha_bounty = count_bounty_in_set(S_alpha);
+	}
+	else {
+		if (eid != -1) e[eid].exists = false;
+	}
 }
-
-double Graph::getlbfromSetR() {
-	type sn = R.size;
-	type sm = 0;
-	for (type i = 0; i < R.size; i++) {
-		type u = R.nodes[i];
-		for (type j = 0; j < adj_length[u]; j++) {
+int Graph::count_bounty_in_set(Set<int>& S) {
+	int count = 0;
+	for (int i = 0; i < S.size; i++) {
+		int u = S.nodes[i];
+		if (A.in[u]) count += bounty[u] - INF;
+		else count += bounty[u];
+	}
+	return count;
+}
+void Graph::check_correctness() {
+	int numerator = 0;
+	for (int i = 0; i < S_alpha.size; i++) {
+		int u = S_alpha.nodes[i];
+		if (!R.in[u])
+			numerator -= undeg[u];
+		for (int j = 0; j < adj_length[u]; j++) {
 			Edge& ne = e[adj[u][j]];
 			if (!ne.exists) continue;
-			if (R.in[ne.t1] && R.in[ne.t2])
-				sm++;
+			int v = ne.t1 == u ? ne.t2 : ne.t1;
+			if (S_alpha.in[u] && !S_alpha.in[v])
+				check(ne.to == v, "E_\\times(S_alpha, V \\ S_alpha) are not all point to V \\ S_alpha");
+			if (S_alpha1.in[u] && !S_alpha1.in[v])
+				check(ne.to == v, "E_\\times(S_alpha1, V \\ S_alpha1) are not all point to V \\ S_alpha1");
+			if (S_alpha1.in[v] && !S_alpha1.in[u])
+				check(ne.to == u, "E_\\times(S_alpha1, V \\ S_alpha1) are not all point to V \\ S_alpha1");
+			if (S_alpha.in[v] && ne.t1 == u)
+				numerator++;
 		}
 	}
-	sm /= 2;
-	// printf("sn:%ld, sm:%ld\n", sn, sm);
-	return (double)sm / sn;
+	check(numerator > (alpha - 1) * S_alpha.size && numerator <= alpha * S_alpha.size, "round-up density of S_alpha does not equal to alpha");
+	for (int i = 0; i < S_alpha1.size; i++) check(S_alpha.in[S_alpha1.nodes[i]], "S_alpha1 is not contained in S_alpha");
+
+	Q.clear(), vis.clear();
+	for (int i = 0; i < V_A.size; i++) if (bounty[V_A.nodes[i]] >= alpha + 1) Q.push(V_A.nodes[i]), vis.insert(V_A.nodes[i]);
+	while (!Q.empty()) {
+		int u = Q.pop();
+		for (int j = 0; j < adj_length[u]; j++) {
+			Edge& ne = e[adj[u][j]]; if (!ne.exists) continue;
+			int from = ne.to == ne.t1 ? ne.t2 : ne.t1; if (vis.in[from]) continue;
+			vis.insert(from), Q.push(from);
+		}
+	}
+	check(vis.size == S_alpha1.size, "S_alpha1 does comply with its definition");
+	for (int i = 0; i < vis.size; i++) check(S_alpha1.in[vis.nodes[i]], "S_alpha1 does comply with its definition");
+
+	Q.clear(), vis.clear();
+	for (int i = 0; i < V_A.size; i++) if (bounty[V_A.nodes[i]] >= alpha) Q.push(V_A.nodes[i]), vis.insert(V_A.nodes[i]);
+	while (!Q.empty()) {
+		int u = Q.pop();
+		for (int j = 0; j < adj_length[u]; j++) {
+			Edge& ne = e[adj[u][j]]; if (!ne.exists) continue;
+			int from = ne.to == ne.t1 ? ne.t2 : ne.t1; if (vis.in[from]) continue;
+			vis.insert(from), Q.push(from);
+		}
+	}
+	check(vis.size == S_alpha.size, "S_alpha does comply with its definition");
+	for (int i = 0; i < S_alpha.size; i++) check(vis.in[S_alpha.nodes[i]], "S_alpha does comply with its definition");
 }
-
-void Graph::output(char* output_file_address) {
-	// Customize what you want to output. 
-	const bool OUTPUT_ANCHORED_DENSITY = true;
-	const bool OUTPUT_NODES = true;
-	const bool OUTPUT_D_ARRAY = false;
-	const bool OUTPUT_EDGES = false;
-
-	FILE* file = fopen(output_file_address, "w");
-
-	if (OUTPUT_ANCHORED_DENSITY) {
-		fprintf(file, "Anchored Subgraph: \n");
-		printf("Anchored Subgraph: \n");
-		fprintf(file, "Number of Nodes: %d. \n", NearDensest.size);
-		printf("Number of Nodes: %d. \n", NearDensest.size);
-		type numerator = 0;
-		for (type i = 0; i < NearDensest.size; i++)
-			numerator += A.in[NearDensest.nodes[i]] ? d[NearDensest.nodes[i]] - INF : d[NearDensest.nodes[i]];
-		type edge_cnt = numerator;
-		for (type i = 0; i < NearDensest.size; i++)
-			if (!R.in[NearDensest.nodes[i]])
-				edge_cnt += adj_length[NearDensest.nodes[i]] / 2;
-		fprintf(file, "Number of Edges: %d * 2 = %d. \n", edge_cnt / 2, edge_cnt);
-		printf("Number of Edges: %d * 2 = %d. \n", edge_cnt / 2, edge_cnt);
-		fprintf(file, "Edges Minus Weight: %d. \n", numerator);
-		printf("Edges Minus Weight: %d. \n", numerator);
-		fprintf(file, "R-density:%lf\n", 1.0 * numerator / NearDensest.size);
-		printf("R-density:%lf\n", 1.0 * numerator / NearDensest.size);
+void Graph::output_AADS() {
+	if (true) { // output density of S_alpha
+		int edge_number = 0, penalty = 0;
+		for (int i = 0; i < S_alpha.size; i++) {
+			int u = S_alpha.nodes[i];
+			if (!R.in[u])
+				penalty += undeg[u];
+			for (int j = 0; j < adj_length[u]; j++) {
+				Edge& ne = e[adj[u][j]];
+				if (!ne.exists) continue;
+				int v = ne.t1 == u ? ne.t2 : ne.t1;
+				if (S_alpha.in[v] && ne.t1 == u)
+					edge_number++;
+			}
+		}
+		printf("- %-30s: (%d - %d) / %d = %lf\n", "R-density", edge_number, penalty, S_alpha.size, double(edge_number - penalty) / S_alpha.size);
 	}
 
-	if (OUTPUT_NODES) {
-		fprintf(file, "Near Densest Anchored Subgraph: ");
-		printf("Near Densest Anchored Subgraph: ");
-		sort(NearDensest.nodes, NearDensest.nodes + NearDensest.size);
-		for (type i = 0; i < NearDensest.size; i++)	fprintf(file, "%d ", NearDensest.nodes[i]), printf("%d ", NearDensest.nodes[i]);
-		fprintf(file, "\n");
+	if (true) { // output nodes in S_alpha
+		sort(S_alpha.nodes, S_alpha.nodes + S_alpha.size);
+		printf("- %-30s: ", "Nodes in S_alpha");
+		for (int i = 0; i < S_alpha.size; i++) {
+			printf("%d ", S_alpha.nodes[i]);
+		}
 		printf("\n");
 	}
-
-	if (OUTPUT_D_ARRAY) {
-		fprintf(file, "D array: ");
-		for (type i = 0; i < NearDensest.size; i++) fprintf(file, "d[%d] = %d\n", NearDensest.nodes[i], d[NearDensest.nodes[i]]);
-	}
-
-	if (OUTPUT_EDGES) {
-		fprintf(file, "Edges: \n");
-		for (type i = 0; i < NearDensest.size; i++) {
-			type u = NearDensest.nodes[i];
-			for (type j = 0; j < adj_length[u]; j++) {
-				Edge& ne = e[adj[u][j]];
-				if (ne.to != u) continue;
-				type from = ne.to == ne.t1 ? ne.t2 : ne.t1;
-				fprintf(file, "%d %d\n", from, u);
-			}
-		}
-	}
-}
-
-vector<double> history;
-void Graph::output() {
-	type Ecnt = 0, penalty = 0, cut = 0, vol_R_cap_S = 0, vol_S_cap_nR = 0, S_cap_R = 0;
-
-	sort(NearDensest.nodes, NearDensest.nodes + NearDensest.size);
-	printf("Densest Subgraph: ");
-	for (type i = 0; i < NearDensest.size; i++) {
-		type u = NearDensest.nodes[i];
-
-		printf("%d ", u);
-
-		if (!R.in[u]) {
-			penalty += undeg[u];
-			vol_S_cap_nR += undeg[u];
-		}
-
-		if (R.in[u]) {
-			vol_R_cap_S += undeg[u];
-			S_cap_R++;
-		}
-
-		for (type j = 0; j < adj_length[u]; j++) {
-			Edge& ne = e[adj[u][j]];
-			if (!ne.exists) continue;
-			type v = ne.t1 == u ? ne.t2 : ne.t1;
-			if (NearDensest.in[v])
-				Ecnt++;
-			if (!NearDensest.in[v])
-				cut++;
-		}
-	}
-	printf("\n");
-	Ecnt /= 4;
-	cut /= 2;
-
-	// printf("|S|: %d\n", NearDensest.size);
-	// printf("Density: %lf\n", 1.0 * Ecnt / NearDensest.size);
-	// printf("Max_d: %d\n", max_d);
-	printf("R-subgraph density: (2 * %d - %d) / %d = %lf\n", Ecnt, penalty, NearDensest.size, 1.0 * (2 * Ecnt - penalty) / NearDensest.size);
-	// printf("Conductance: %d / %d = %lf\n", cut, min(NearDensest.size, n - NearDensest.size), 1.0 * cut / min(NearDensest.size, n - NearDensest.size));
-	// assert(vol_R_cap_S != vol_S_cap_nR); printf("Local conductance: %d / (%d - %d) = %lf\n", cut, vol_R_cap_S, vol_S_cap_nR, 1.0 * cut / (vol_R_cap_S - vol_S_cap_nR));
-	// printf("F1-score: 2 * %d / (%d + %d) = %lf\n", S_cap_R, NearDensest.size, R.size, 2.0 * S_cap_R / (NearDensest.size + R.size));
-	history.push_back(1.0 * (2 * Ecnt - penalty) / NearDensest.size);
-
-	long long memory = m * sizeof(Edge) + n * sizeof(type) + m * sizeof(type) + n * sizeof(type) + 7 * n * (sizeof(type) + sizeof(bool)) + n * sizeof(type) + 3 * n * sizeof(type);
-	//                 e                  d                  adj                adj_length         7 * Set                                 Q                  dist+cur+p
-	// printf("Memory: %lf MB = %lf GB\n", 1.0 * memory / 1024 / 1024 + 1.0 * memory / 1024 / 1024 / 1024);
-}
-
-void Graph::display_all_edges() {
-	printf("All edges:------------------------\n");
-	for (type u = 0; u < n; u++)
-		for (type j = 0; j < adj_length[u]; j++) {
-			Edge& ne = e[adj[u][j]];
-			if (!ne.exists) continue;
-			if (ne.to != u) continue;
-			type from = ne.to == ne.t1 ? ne.t2 : ne.t1;
-			printf("%d %d\n", from, ne.to);
-		}
-	printf("----------------------------------\n");
-}
-bool Graph::check() {
-	if (NearDensest.size == R.size)
-		return true;
-	// This function check the correctness of NearDensest, denoted as Ans for simplicity. 
-	// 1. Check all edge between Ans and (V - Ans) should point to (V - Ans);
-	// 2. Check the sum of d[] in Ans should equal to (2|E(Ans)| - \sum degree) (the definition of anchored density);
-	// 3. Note that this function does not check whether Ans is the densest subgraph, if you want to check, please check if the result is the same as using the global algorithm.
-
-	// 1. Check all edge between Ans and (V - Ans) should point to (V - Ans);
-	for (type i = 0; i < NearDensest.size; i++) {
-		type u = NearDensest.nodes[i];
-		for (type j = 0; j < adj_length[u]; j++) {
-			Edge& ne = e[adj[u][j]];
-			if (!ne.exists) continue;
-			type v = ne.t1 == u ? ne.t2 : ne.t1;
-			if (NearDensest.in[v]) continue;
-			if (!(ne.to == v))
-				return false;
-		}
-	}
-
-	// cout<<"ok1"<<endl;
-	// 2. Check the sum of d[] in Ans should equal to (2|E(Ans)| - \sum degree) (the definition of anchored density);
-	type sum_d = 0, numerator = 0; // numerator is (2|E(Ans)| - \sum degree)
-	for (type i = 0; i < NearDensest.size; i++) sum_d += A.in[NearDensest.nodes[i]] ? d[NearDensest.nodes[i]] - INF : d[NearDensest.nodes[i]];
-
-	// cout<<"sum_d"<<sum_d<<endl;
-	for (type i = 0; i < NearDensest.size; i++) { // numerator += 2|E(Ans)|
-		type u = NearDensest.nodes[i];
-		for (type j = 0; j < adj_length[u]; j++) {
-			Edge& ne = e[adj[u][j]];
-			if (!ne.exists) continue;
-			type v = ne.t1 == u ? ne.t2 : ne.t1;
-			if (!NearDensest.in[v]) continue;
-			numerator++;
-		}
-	}
-	if (numerator % 4 != 0) // An edge is counted four time, so we need to divide it back then times 2. 
-		return false;
-	// cout<<"ok2"<<endl;
-	numerator /= 2;
-	// cout<<"numerator="<<numerator<<endl;
-	for (type i = 0; i < NearDensest.size; i++) {
-		if (!R.in[NearDensest.nodes[i]]) {
-			numerator -= undeg[NearDensest.nodes[i]]; // numerator -= \sum degree
-		}
-	}
-	// cout<< numerator<<endl;
-	// cout<< sum_d<<endl;
-	if (numerator != sum_d)
-		return false;
-	// cout<<"ok3"<<endl;
-	return true;
 }
 
 int main(int argc, char** argv) {
-	char adjacent_list_address[100], R_set_address[100], A_set_address[100], updateedges_address[100];
-	if (argc == 5) {
-		strcpy(adjacent_list_address, argv[1]); strcpy(R_set_address, argv[2]); strcpy(A_set_address, argv[3]); strcpy(updateedges_address, argv[4]);
-	}
-	else {
-		printf("Usage:\n");
-		printf("./main adjacent_list_address R_set_address A_set_address updateedges_address\n");
-		return 0;
-	}
-	double runtime;
+	srand(16);
+	check(argc == 5, "The number of arguments of main are incorrect. ");
+	// strcpy(argv[1], "../AnchoredGraphs/amazon/dataset.txt");
+	// strcpy(argv[2], "../AnchoredGraphs/amazon/R.txt");
+	// strcpy(argv[3], "../AnchoredGraphs/amazon/A.txt");
+	char dataset_address[1000]; strcpy(dataset_address, argv[1]);
 
-	printf("----------Now processing graph: %s----------\n", adjacent_list_address);
+	printf("----------Now processing %s----------\n", dataset_address);
+	printf("- %-30s: %s\n", "Algorithm used", "BasicIns and BasicDel");
+
+	FILE* R_file = fopen(argv[2], "r"), * A_file = fopen(argv[3], "r");
+	check(R_file != NULL && A_file != NULL, "Can not open R or A sets file.");
+	int number_of_cases = read_number(R_file); read_number(A_file);
+
+	FILE* dataset_file = fopen(dataset_address, "r");
+	check(dataset_file != NULL, "Can not open file dataset_address\n");
 
 
-	G = new Graph();
-	timer_start();
-	G->read_edge(adjacent_list_address);
-	runtime = timer_end();
-	// printf("Reading edges runtime:\t\t%.2lf seconds\n", runtime);
+	FILE* updatededge_file = fopen(argv[4], "r");
+	check(updatededge_file != NULL, "Can not open file updatededge_file\n");
 
-	// G.read_R(R_set_address);
-	// G.read_A(A_set_address);
+	Graph G; Timer timer;
+	G.read_graph_from_dataset(dataset_file);
+	G.read_update_edge(updatededge_file);
 
-	read_RSet(R_set_address, G->n);
-	read_ASet(A_set_address, G->n);
+	printf("- %-30s: %d, %d\n", "n, m", G.n, G.m);
+	int nnow_case=0;
+	for (int now_case = 0; now_case < number_of_cases; now_case++) {
+		if (now_case == 10) // DEBUG
+			now_case = now_case;
 
-	read_updateedges(updateedges_address);
-
-	delete G;
-
-	double total_insert_time = 0.0;
-	double total_delete_time = 0.0;
-	int realcnt = 0;
-
-	for (type i = 0; i < RSet.size(); i++) {
-		if (RSetflag[i] == 0) {
-			continue;
-		}
-		G = new Graph();
-		G->read_edge(adjacent_list_address);
-		for (type j = 0; j < RSet[i].size; j++) {
-			G->R.insert(RSet[i].nodes[j]);
-		}
-		for (type j = 0; j < ASet[i].size; j++) {
-			G->A.insert(ASet[i].nodes[j]);
-		}
-		double total_insert_singlequery_time = 0.0;
-		double total_delete_singlequery_time = 0.0;
-		G->get_densest(); // Set alpha as the round-up value of current density.
-		G->output();
-		assert(G->check());
-
-		// G->generateUpdateEdges(1000);
-		// ???? i ??????????e[i]??e[i+1]???????????????update edges??????????eid?????
-		G->init_max_d();
-		cout<<"G->max_D=" <<G->max_d<<endl;
-		cout<<"G->alpha=" <<G->alpha<<endl;
-		if(G->max_d<3){
-			delete G;
-			continue;
-		}
-		realcnt++;
-		vector<type> temedges;
-		for (type eid : totalupdateedges) {
-			G->updateedges.insert(eid);
-		}
-
-		for (type eid : G->updateedges)
-			temedges.push_back(eid);
-
-		for (type p = 0; p < temedges.size(); p++) {
-			type eid = temedges[p];
-			// eid = 20744;
-			printf("----------------\nNow update edge (%d, %d) %d\n", G->e[eid].t1, G->e[eid].t2, eid);
-			timer_start();
-			G->ImproveDelete(eid);
-			runtime = timer_end();
-			total_delete_time += runtime;
-			total_delete_singlequery_time += runtime;
-			// G->output();
-			if (G->check() == false) {
-				printf("!!!!!!!!!!!!!!!the %d %d query time check error\n", i, p);
-			}
-			printf("Update delete time:\t%.6f seconds\n", runtime);
-
-			timer_start();
-			G->ImproveInsert(eid);
-			runtime = timer_end();
-			total_insert_time += runtime;
-			total_insert_singlequery_time += runtime;
-			// G->output();
-			if (G->check() == false) {
-				printf("!!!!!!!!!!!!!!!the %d %d query time check error\n", i, p);
-			}
-			printf("Update insert time:\t%.6f seconds\n", runtime);
-
-			// printf("query %d cur total insert time:\t%.6f seconds\n", i, total_insert_singlequery_time);
-			// printf("query %d cur total delete time:\t%.6f seconds\n", i, total_delete_singlequery_time);
-			printf("query %d cur average insert time:\t%.6f seconds\n", i, total_insert_time / (p + 1));
-			printf("query %d cur average delete time:\t%.6f seconds\n", i, total_delete_time / (p + 1));
-		}
-
-		// G->output();
-		if (G->check() == false) {
-			printf("!!!!!!!!!!!!!!!the %d query time check error\n", i);
-			delete G;
+		printf("-----Now case %d-----\n", now_case);
+		G.reset();
+		if(G.read_R_and_A_set(R_file, A_file)==false){
 			continue;
 		}
 
-		printf("query %d total insert time:\t%.6f seconds\n", i, total_insert_singlequery_time);
-		printf("query %d total delete time:\t%.6f seconds\n", i, total_delete_singlequery_time);
-		printf("query %d average insert time:\t%.6f seconds\n", i, total_insert_time / realcnt);
-		printf("query %d average delete time:\t%.6f seconds\n", i, total_delete_time / realcnt);
-		delete G;
-		// break;
+		// G.read_R_and_A_set(R_file, A_file);
+
+		timer.start();
+		G.initialize();
+		G.get_AADS(); if (G.alpha == 1) { printf("This case should be skipped.\n"); continue; }
+		timer.end(); printf("- %-30s: %lf\n", "Static algorithm runtime", timer.time());
+
+		// G.output_AADS();
+
+		// G.get_update_edge();
+		G.maintain();
+		nnow_case++;
+
+		// if(nnow_case==10){
+		// 	break;
+		// }
+
 	}
-	printf("total insert time:\t%.6f seconds\n", total_insert_time);
+	fclose(R_file), fclose(A_file);
 
-	printf("total delete time:\t%.6f seconds\n", total_delete_time);
-
-	printf("average insert time:\t%.6f seconds\n", total_insert_time / (RSet.size() - Rsettruecnt));
-
-	printf("average delete time:\t%.6f seconds\n", total_delete_time / (RSet.size() - Rsettruecnt));
+	printf("- %-30s: %lf\n", "Dynamic Average insert runtime", G.allquery_ave_delete_time / nnow_case);
+	printf("- %-30s: %lf\n", "Dynamic Average delete runtime", G.allquery_ave_insert_time / nnow_case);
 
 	return 0;
 }
-
